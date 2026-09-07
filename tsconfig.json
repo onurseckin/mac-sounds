@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "types": ["bun"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}
