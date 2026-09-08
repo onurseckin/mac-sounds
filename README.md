@@ -38,6 +38,7 @@ Run `bun run unsync` to remove it again.
 | `Tab` | toggle the current group |
 | `Ctrl+S` | stop playback |
 | `Ctrl+Y` | copy the selected sound's path to the clipboard |
+| `Ctrl+K` | switch to the hooks view (see [Hooks](#hooks)) |
 | `Escape` | clear the query, or quit when it is already empty |
 | `Ctrl+C` | quit |
 
@@ -50,6 +51,7 @@ mac-sounds                      launch the TUI (default)
 mac-sounds list [options]       print sounds, one per line
 mac-sounds play <query>         play the best fuzzy match, then exit
 mac-sounds groups               list the sound groups and their directories
+mac-sounds hooks [subcommand]   manage lifecycle-hook sound bindings, see below
 mac-sounds help [command]       print help for a command
 ```
 
@@ -60,6 +62,66 @@ Global flags: `-h, --help` and `-V, --version`. Every command and subcommand als
 ```sh
 mac-sounds play glass
 mac-sounds list --group modern
+```
+
+## Hooks
+
+mac-sounds can play a sound when your agent finishes, for three host apps: Claude Code, Codex CLI, and Antigravity CLI.
+
+A host's config never contains a sound name. `hooks install` writes it one stable dispatch line pointing at `~/.config/mac-sounds/hook.sh`, and that shim looks up which sound to play, at fire time, from mac-sounds' own state file at `~/.config/mac-sounds/hooks.json`. So changing a sound, or switching one off, only ever touches mac-sounds' state — no host config is rewritten, which is why it's instant.
+
+```
+mac-sounds hooks                            show hosts, events, sounds, on/off
+mac-sounds hooks install <host> [--force]   wire mac-sounds into that host's global config
+mac-sounds hooks uninstall <host>           remove it and restore anything displaced
+mac-sounds hooks set <host> <event> <sound> assign a sound (fuzzy name or absolute path)
+mac-sounds hooks enable <host> [event]      turn an event on, or every bound event on that host
+mac-sounds hooks disable <host> [event]     turn an event off, or every bound event on that host
+```
+
+`<host>` is one of `claude`, `codex`, `antigravity`. Events differ per host:
+
+| Host | Events |
+|---|---|
+| `claude` | `stop`, `stop-failure`, `subagent-stop`, `session-start`, `notification` |
+| `antigravity` | `stop` |
+| `codex` | `turn-complete` |
+
+Codex exposes only `turn-complete`, with no separate success/failure signal — that's a limit of Codex's legacy `notify` mechanism, not of mac-sounds, so don't file it as a bug. (Codex's newer `[hooks]` table hashes every entry and treats a config-written hook as untrusted until a human approves it in the TUI, which makes it unusable for this; `notify` has no such gate.)
+
+`hooks install` also seeds sensible defaults the first time it wires up a host with no bindings of its own: completion-style events get `Pop.aiff`, failure-style events get `Submarine.aiff`. Events with no natural default (like `session-start`) are left unbound.
+
+### Hooks view (TUI)
+
+`Ctrl+K` from the sound browser opens the hooks view; `Ctrl+K` again returns to the browser.
+
+| Key | Action |
+|---|---|
+| `Up` / `Down` | move selection |
+| `Space` | toggle the selected event on/off |
+| `Enter` | play the event's bound sound |
+| `a` | assign mode: type to fuzzy-search, `Enter` picks, `Escape` cancels |
+
+Note: outside assign mode, `Escape` here quits mac-sounds — same as in the browser — it does not fall back to the browser view; use `Ctrl+K` for that.
+
+### Safety
+
+- `hooks install` refuses if the host already has a sound hook mac-sounds didn't write, listing what it found. `--force` overrides it and stashes the displaced entry so `hooks uninstall` restores it.
+- `hooks uninstall` keeps your sound choices in mac-sounds' state, so a later `hooks install` on the same host picks them back up.
+- Existing config is preserved byte-for-byte; a `.mac-sounds.bak` backup is written next to it the first time mac-sounds modifies it.
+
+### Example
+
+```sh
+mac-sounds hooks install claude
+# mac-sounds: wired 5 event(s) into Claude Code (~/.claude/settings.json)
+# (stop, subagent-stop -> Pop.aiff; stop-failure -> Submarine.aiff; session-start, notification left unbound)
+
+mac-sounds hooks set claude stop glass
+# mac-sounds: stop on Claude Code -> /System/Library/Sounds/Glass.aiff
+
+mac-sounds hooks disable claude subagent-stop
+# mac-sounds: disabled subagent-stop for Claude Code (mac-sounds state only, Claude Code's config untouched)
 ```
 
 ## Why

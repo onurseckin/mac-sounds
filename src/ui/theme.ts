@@ -26,9 +26,19 @@ export const theme = {
 } as const;
 
 export const HELP_TEXT =
-  "↑↓/^P^N move  PgUp/PgDn ×10  Home/End  Enter/Space play·toggle  " +
+  "Sounds [^K: Hooks]  ↑↓/^P^N move  PgUp/PgDn ×10  Home/End  Enter/Space play·toggle  " +
   "→/← expand/collapse  Tab group  ^S stop  ^Y copy path  ^U clear  " +
   "Esc clear/quit  ^C quit  (space plays a sound, it is not typed)";
+
+// Hooks view's help bar mirrors the browser's: same "current view [switch
+// key: other view]" prefix, then the keys that view actually has.
+export const HOOKS_HELP_TEXT =
+  "Hooks [^K: Sounds]  ↑↓/^P^N move  Space toggle  Enter play  a assign  Esc quit  ^C quit";
+
+// Assign mode reuses the same physical keys (arrows, Enter, Escape) for a
+// different purpose -- shown as a second help line only while assigning,
+// rather than cramming both key sets into one line all the time.
+export const HOOKS_ASSIGN_HELP_TEXT = "assign: type to filter, ↑↓ move, Enter pick, Escape cancel";
 
 // Rebuilds the row list for a hypothetical query/collapsed pair. Pulled out
 // as a pure function (catalog passed in, not closed over) so app.tsx can call

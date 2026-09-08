@@ -47,7 +47,10 @@ export function buildRows(groups: FilteredGroup[], collapsed: ReadonlySet<string
  * able to move the cursor onto a header in order to collapse or expand it,
  * so there is no "unselectable" row kind here to skip over.
  */
-export function moveSelection(rows: readonly Row[], index: number, delta: number): number {
+// Generic in the row type: the math only ever needs `rows.length`, so the
+// hooks view's flat list (host headers + events) and its assign-mode sound
+// list reuse this instead of each hand-rolling the same clamp.
+export function moveSelection<T>(rows: readonly T[], index: number, delta: number): number {
   if (rows.length === 0) return 0;
   const next = index + delta;
   if (next < 0) return 0;

@@ -1,14 +1,19 @@
-import { COMMANDS } from "./constants.ts";
+import { ALL_COMMANDS } from "./constants.ts";
 import type { CommandName } from "./constants.ts";
 import { printCommandHelp, printTopLevelHelp } from "./help.ts";
 import { runGroups } from "./groups.ts";
+import { runHookDispatch } from "./hooks/invoke.ts";
+import { runHooks } from "./hooks/router.ts";
 import { runList } from "./list.ts";
 import { runPlay } from "./play.ts";
 import { suggestCommand } from "./suggest.ts";
 import { readVersion } from "./version.ts";
 
+// Checked against ALL_COMMANDS (COMMANDS plus the hidden "hook" dispatcher),
+// not just COMMANDS, so `mac-sounds help hook` resolves even though "hook"
+// is deliberately absent from the visible top-level usage table.
 function isCommandName(value: string): value is CommandName {
-  return COMMANDS.some((command) => command.name === value);
+  return ALL_COMMANDS.some((command) => command.name === value);
 }
 
 function reportUnknown(kind: "command" | "option", token: string): never {
@@ -66,6 +71,14 @@ export async function parseArgs(argv: readonly string[]): Promise<void> {
   }
   if (first === "groups") {
     runGroups(argv.slice(1));
+    return;
+  }
+  if (first === "hooks") {
+    runHooks(argv.slice(1));
+    return;
+  }
+  if (first === "hook") {
+    await runHookDispatch(argv.slice(1));
     return;
   }
 

@@ -14,6 +14,7 @@ import { createPlayer } from "../sounds/player.ts";
 import { filterCatalog } from "../search/filter.ts";
 import { moveSelection, reselect } from "./rows.ts";
 import type { Row } from "./rows.ts";
+import { HooksView } from "./hooks-view.tsx";
 import {
   HELP_TEXT,
   computeRows,
@@ -23,6 +24,10 @@ import {
   splitHighlight,
   theme,
 } from "./theme.ts";
+
+// Ctrl+K toggles between the two top-level views. Kept as a plain union
+// rather than a boolean so a third view can be added later without a rename.
+type ViewName = "browser" | "hooks";
 
 // Every <text> below pins wrapMode="none": OpenTUI's default word-wrap would
 // otherwise let a long path (tone-library dirs run ~90 chars) spill onto a
@@ -86,6 +91,7 @@ export function App(props: { onQuit: () => void }): JSX.Element {
   const catalog = useMemo(() => loadCatalog(), []);
   const totalCount = useMemo(() => catalog.reduce((n, g) => n + g.sounds.length, 0), [catalog]);
 
+  const [view, setView] = useState<ViewName>("browser");
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -166,11 +172,22 @@ export function App(props: { onQuit: () => void }): JSX.Element {
   }
 
   useKeyboard((key) => {
+    // Ctrl+K (switch view) and Ctrl+C (quit) work from either view -- this
+    // handler stays mounted the whole session, unlike HooksView's own
+    // useKeyboard which only exists while that view is on screen -- so they
+    // are handled once, here, before the browser-only guard below.
+    if (key.ctrl && key.name === "k") {
+      setView((v) => (v === "browser" ? "hooks" : "browser"));
+      return;
+    }
+    if (key.ctrl && key.name === "c") {
+      props.onQuit();
+      return;
+    }
+    if (view !== "browser") return;
+
     if (key.ctrl) {
       switch (key.name) {
-        case "c":
-          props.onQuit();
-          return;
         case "u":
           applyQuery("");
           return;
@@ -256,6 +273,20 @@ export function App(props: { onQuit: () => void }): JSX.Element {
 
   const playingPath = player.current();
   const notice = playerError ?? status;
+
+  // Placed after every hook above so this component always calls the same
+  // hooks in the same order regardless of which view is showing (React's
+  // rules-of-hooks) -- only the JSX actually returned differs.
+  if (view === "hooks") {
+    return (
+      <HooksView
+        catalog={catalog}
+        player={player}
+        playerError={playerError}
+        onQuit={props.onQuit}
+      />
+    );
+  }
 
   return (
     <box flexDirection="column" flexGrow={1}>
