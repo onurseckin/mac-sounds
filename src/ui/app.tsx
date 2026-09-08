@@ -109,14 +109,14 @@ export function App(props: { onQuit: () => void }): JSX.Element {
     const previous = rows[selectedIndex];
     const nextRows = computeRows(catalog, nextQuery, collapsed);
     setQuery(nextQuery);
-    setSelectedIndex(reselect(nextRows, previous));
+    setSelectedIndex(reselect(nextRows, previous, selectedIndex));
   }
 
   function applyCollapsed(nextCollapsed: Set<string>): void {
     const previous = rows[selectedIndex];
     const nextRows = computeRows(catalog, query, nextCollapsed);
     setCollapsed(nextCollapsed);
-    setSelectedIndex(reselect(nextRows, previous));
+    setSelectedIndex(reselect(nextRows, previous, selectedIndex));
   }
 
   function toggleGroup(groupId: string): void {
@@ -283,7 +283,7 @@ export function App(props: { onQuit: () => void }): JSX.Element {
         catalog={catalog}
         player={player}
         playerError={playerError}
-        onQuit={props.onQuit}
+        onBack={() => setView("browser")}
       />
     );
   }

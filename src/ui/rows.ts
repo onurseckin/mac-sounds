@@ -58,30 +58,49 @@ export function moveSelection<T>(rows: readonly T[], index: number, delta: numbe
   return next;
 }
 
-export function reselect(rows: readonly Row[], previous: Row | undefined): number {
-  if (rows.length === 0 || previous === undefined) return 0;
+/**
+ * Resolution order: the previous sound's own path, then its group (a header
+ * row's `groupId` matches too), then `previousIndex` clamped into the new
+ * range, then `0`. Path/group identity is tried first because a row's
+ * numeric position shifts under ordinary use — collapsing a group above it,
+ * or a query narrowing the list, moves everything below it — so re-finding
+ * the same sound (or at least the same group) lands on what the user was
+ * actually looking at, which its old numeric index can no longer promise.
+ * `previousIndex` only matters once identity is unrecoverable, e.g. the
+ * selected sound itself got filtered out by a narrower query: clamping it
+ * keeps the cursor near its old screen position instead of resetting to the
+ * top of the list.
+ */
+export function reselect(
+  rows: readonly Row[],
+  previous: Row | undefined,
+  previousIndex?: number,
+): number {
+  if (rows.length === 0) return 0;
 
-  if (previous.kind === "sound") {
-    const byPath = rows.findIndex(
-      (row) => row.kind === "sound" && row.sound.path === previous.sound.path,
-    );
-    if (byPath !== -1) return byPath;
+  if (previous !== undefined) {
+    if (previous.kind === "sound") {
+      const byPath = rows.findIndex(
+        (row) => row.kind === "sound" && row.sound.path === previous.sound.path,
+      );
+      if (byPath !== -1) return byPath;
+    }
+
+    // Same group survived even though the exact sound didn't (or `previous`
+    // was a header row itself) — land on it rather than jumping back to the
+    // top. `findIndex` naturally lands on the group's own header row first,
+    // since it's pushed before any of its sound rows in buildRows.
+    const byGroup = rows.findIndex((row) => row.groupId === previous.groupId);
+    if (byGroup !== -1) return byGroup;
   }
 
-  // Same group survived even though the exact sound didn't (or `previous`
-  // was a header row itself) — land on it rather than jumping back to the
-  // top. `findIndex` naturally lands on the group's own header row first,
-  // since it's pushed before any of its sound rows in buildRows.
-  const byGroup = rows.findIndex((row) => row.groupId === previous.groupId);
-  if (byGroup !== -1) return byGroup;
-
-  // Nothing recognizable survived the re-filter or toggle. The signature
-  // deliberately takes the previous *row*, not a previous *index* — this
-  // helper has no numeric position to clamp back into range, only identity
-  // to match on. So "clamp the old index" and "just use 0" collapse into the
-  // same answer here: 0 is the nearest valid index we can justify without
-  // more information. A caller that wants literal position preservation
-  // instead of identity preservation would need to track and clamp its own
-  // index rather than lean on this helper.
+  // Identity is gone -- either nothing matched above, or there was no
+  // previous row to match against at all. Clamp the caller's last numeric
+  // index into the new range instead of conceding to 0 outright, so a search
+  // that narrows the list keeps the cursor near where it was rather than
+  // sending it to the top; only a caller with no index either falls back to 0.
+  if (previousIndex !== undefined) {
+    return Math.min(Math.max(previousIndex, 0), rows.length - 1);
+  }
   return 0;
 }

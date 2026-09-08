@@ -79,17 +79,23 @@ mac-sounds hooks enable <host> [event]      turn an event on, or every bound eve
 mac-sounds hooks disable <host> [event]     turn an event off, or every bound event on that host
 ```
 
+Disabling an event with no sound assigned is a no-op that exits 0 ("nothing to disable"); enabling one still exits 1 and tells you to `hooks set` first. There's nothing wrong with something already off, but nothing to turn on either — the asymmetry is deliberate.
+
 `<host>` is one of `claude`, `codex`, `antigravity`. Events differ per host:
 
 | Host | Events |
 |---|---|
 | `claude` | `stop`, `stop-failure`, `subagent-stop`, `session-start`, `notification` |
-| `antigravity` | `stop` |
+| `antigravity` | `stop`, `stop-failure` |
 | `codex` | `turn-complete` |
+
+Antigravity CLI itself has only one `Stop` hook, and mac-sounds still writes a single entry into `~/.gemini/config/hooks.json` for it. The split happens at fire time: mac-sounds reads the `Stop` payload from stdin and treats a `terminationReason` of `error` or `max_steps_exceeded`, or any non-empty `error` string, as failure; everything else — including a payload that fails to parse — counts as success, deliberately, so a payload schema change can never turn every normal completion into an alarm.
 
 Codex exposes only `turn-complete`, with no separate success/failure signal — that's a limit of Codex's legacy `notify` mechanism, not of mac-sounds, so don't file it as a bug. (Codex's newer `[hooks]` table hashes every entry and treats a config-written hook as untrusted until a human approves it in the TUI, which makes it unusable for this; `notify` has no such gate.)
 
 `hooks install` also seeds sensible defaults the first time it wires up a host with no bindings of its own: completion-style events get `Pop.aiff`, failure-style events get `Submarine.aiff`. Events with no natural default (like `session-start`) are left unbound.
+
+A host can refuse to install. Codex ships with its single `notify` slot often already taken (Codex Computer Use uses it), and `hooks install` will not displace a hook it did not write without `--force` (see Safety, below).
 
 ### Hooks view (TUI)
 
@@ -100,9 +106,9 @@ Codex exposes only `turn-complete`, with no separate success/failure signal — 
 | `Up` / `Down` | move selection |
 | `Space` | toggle the selected event on/off |
 | `Enter` | play the event's bound sound |
-| `a` | assign mode: type to fuzzy-search, `Enter` picks, `Escape` cancels |
-
-Note: outside assign mode, `Escape` here quits mac-sounds — same as in the browser — it does not fall back to the browser view; use `Ctrl+K` for that.
+| `a` | assign mode: type to fuzzy-search, `Enter` picks |
+| `Escape` | assign mode: cancel it; otherwise: back to the sound browser |
+| `Ctrl+C` | quit |
 
 ### Safety
 
@@ -122,6 +128,9 @@ mac-sounds hooks set claude stop glass
 
 mac-sounds hooks disable claude subagent-stop
 # mac-sounds: disabled subagent-stop for Claude Code (mac-sounds state only, Claude Code's config untouched)
+
+mac-sounds hooks disable claude session-start
+# mac-sounds: no sound assigned to 'session-start' for Claude Code -- nothing to disable
 ```
 
 ## Why
@@ -158,7 +167,7 @@ There are no tests in this project, deliberately.
 
 ## How it works
 
-Rendering is done with OpenTUI (`@opentui/react`). Filtering uses an in-memory fuzzy matcher rather than shelling out to `ripgrep`: the full catalog is around 66 sounds, so a subprocess per keystroke would be slower than matching in process. Playback goes through `afplay`, with only one sound alive at a time — starting a new one stops whatever was already playing.
+Rendering is done with OpenTUI (`@opentui/react`). Filtering uses an in-memory fuzzy matcher rather than shelling out to `ripgrep`: the full catalog is around 66 sounds, so a subprocess per keystroke would be slower than matching in process. Playback goes through `afplay`. In the TUI and `play`, only one sound is alive at a time — starting a new one stops the previous. Hook playback is deliberately different: it spawns detached and never kills another `afplay`, so a hook firing cannot cut off audio started by you or by another tool.
 
 ## License
 

@@ -161,7 +161,7 @@ export function HooksView(props: {
   catalog: Catalog;
   player: Player;
   playerError: string | null;
-  onQuit: () => void;
+  onBack: () => void;
 }): JSX.Element {
   const { catalog, player } = props;
 
@@ -314,7 +314,7 @@ export function HooksView(props: {
         playSelected();
         return;
       case "escape":
-        props.onQuit();
+        props.onBack();
         return;
       case "a":
         beginAssign();

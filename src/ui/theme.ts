@@ -33,7 +33,7 @@ export const HELP_TEXT =
 // Hooks view's help bar mirrors the browser's: same "current view [switch
 // key: other view]" prefix, then the keys that view actually has.
 export const HOOKS_HELP_TEXT =
-  "Hooks [^K: Sounds]  ↑↓/^P^N move  Space toggle  Enter play  a assign  Esc quit  ^C quit";
+  "Hooks [^K: Sounds]  ↑↓/^P^N move  Space toggle  Enter play  a assign  Esc back  ^C quit";
 
 // Assign mode reuses the same physical keys (arrows, Enter, Escape) for a
 // different purpose -- shown as a second help line only while assigning,

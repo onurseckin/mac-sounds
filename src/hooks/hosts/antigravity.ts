@@ -30,15 +30,34 @@ const OWN_HOOK_NAME = "mac-sounds";
 
 // Per the brief, Antigravity also has PreToolUse/PostToolUse/PreInvocation/
 // PostInvocation -- this adapter only claims Stop, per product scope.
+//
+// Antigravity itself has only ONE Stop hook, unlike Claude Code's separate
+// Stop/StopFailure events -- but its Stop payload (delivered on stdin) does
+// carry enough to tell completion from failure, and dispatch.ts owns that
+// branching. So this adapter exposes it as two mac-sounds *event ids*,
+// "stop" and "stop-failure", both mapped to the SAME wire event name
+// ("Stop", below) and written as the SAME single hooks.json entry -- see
+// ownHandler(). Every method below (installedEventIds, install, uninstall,
+// stdoutFor) is the same generic logic this file already used for one
+// event; it does the right thing for two ids sharing one wire name with no
+// special-casing, because "installed"/"conflict"/"stdout" all key off the
+// wire event name via EVENT_NAME, not our id.
 const EVENTS: readonly HookEvent[] = [
   {
     id: "stop",
-    label: "Stop",
-    description: "Fires when the agent loop stops (or is about to) for the current run.",
+    label: "Stop — completed",
+    description: "Fires when the agent finishes normally (Stop payload shows no error).",
+  },
+  {
+    id: "stop-failure",
+    label: "Stop — failed",
+    description: "Fires when the agent stops on an error or step-limit (same Stop payload).",
   },
 ];
 
-const EVENT_NAME: Readonly<Record<string, string>> = { stop: "Stop" };
+// Both ids resolve to the one array Antigravity actually has -- there is no
+// separate "StopFailure" wire event to point at.
+const EVENT_NAME: Readonly<Record<string, string>> = { stop: "Stop", "stop-failure": "Stop" };
 
 /** A foreign named-hook's event array, displaced by a force-install. */
 interface DisplacedForeignHook {
@@ -66,6 +85,10 @@ function isCommandHandler(value: unknown): value is { command: string } {
 function ownHandler(shimPath: string): Record<string, unknown> {
   return {
     type: "command",
+    // Always "stop", even when only "stop-failure" is requested/toggled:
+    // Antigravity has one Stop hook, so there is only ever one command to
+    // write. dispatch.ts is the one place that tells the two outcomes apart
+    // (from the Stop payload on stdin) and picks which binding to play.
     command: buildCommand(shimPath, HOST_ID, "stop"),
     // Hooks run synchronously inside the agent loop with a 30s *default*
     // timeout (verified brief) -- pin a short one so a stuck sound player
@@ -111,7 +134,11 @@ export class AntigravityAdapter implements HostAdapter {
     // value that blocks the stop; any other value lets the agent stop, and
     // stdout must parse as a JSON object. Returning an explicit, unambiguous
     // non-blocking decision here (rather than "" or some accidental value)
-    // documents that this is a deliberate answer, not an omission.
+    // documents that this is a deliberate answer, not an omission. Ignoring
+    // the argument is deliberate too: "stop" and "stop-failure" are the same
+    // wire hook (see EVENT_NAME above), so whichever one dispatch.ts
+    // resolves to, the answer Antigravity itself needs on stdout is
+    // identical.
     return '{"decision":"stop"}';
   }
 

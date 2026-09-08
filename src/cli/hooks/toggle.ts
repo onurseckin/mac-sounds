@@ -52,6 +52,19 @@ function runToggle(args: readonly string[], enabled: boolean): void {
 
   const eventId = resolveEvent(prefix, hint, adapter.events, eventArg);
   if (getBinding(config, hostId, eventId) === undefined) {
+    // Disabling an unbound event is idempotent: with no sound wired up, the
+    // event is already "off" in every sense a caller can observe, so this
+    // must succeed (and must not create a binding) -- that's what makes
+    // scripting `hooks disable` safe without checking state first. Enabling
+    // has no such out: there's no sound to turn on, so it keeps failing
+    // below. This asymmetry between the two verbs is deliberate, not a bug
+    // to "fix" into symmetry.
+    if (!enabled) {
+      console.log(
+        `mac-sounds: no sound assigned to '${eventId}' for ${adapter.label} -- nothing to disable`,
+      );
+      process.exit(0);
+    }
     process.stderr.write(
       `${prefix}: no sound assigned to '${eventId}' for ${adapter.label} -- run 'mac-sounds hooks set ${hostId} ${eventId} <sound>' first\n`,
     );
