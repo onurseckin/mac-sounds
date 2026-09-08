@@ -19,7 +19,9 @@
     "format": "oxfmt src",
     "format:check": "oxfmt --check src",
     "typecheck": "tsc --noEmit",
-    "check": "bun run typecheck && bun run lint && bun run format:check"
+    "check": "bun run typecheck && bun run lint && bun run format:check",
+    "sync": "bun link",
+    "unsync": "bun unlink"
   },
   "dependencies": {
     "@opentui/core": "^0.5.11",

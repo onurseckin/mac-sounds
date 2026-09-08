@@ -13,12 +13,14 @@ bun install
 bun start
 ```
 
-To get a `mac-sounds` command on your `PATH` instead:
+To get a `mac-sounds` command on your `PATH` from any directory:
 
 ```sh
-bun link
+bun run sync
 mac-sounds
 ```
+
+Run `bun run unsync` to remove it again.
 
 ## Keys
 
@@ -41,13 +43,24 @@ mac-sounds
 
 Note: `Space` plays the selected sound, it does not type a space into the search query. If your search seems stuck, that's why.
 
-## CLI flags
+## Commands
 
-| Flag | Effect |
-|---|---|
-| `--help` | print usage and exit |
-| `--version` | print the installed version and exit |
-| `--list` | print every sound path, one per line, and exit (useful for piping into other shell commands) |
+```
+mac-sounds                      launch the TUI (default)
+mac-sounds list [options]       print sounds, one per line
+mac-sounds play <query>         play the best fuzzy match, then exit
+mac-sounds groups               list the sound groups and their directories
+mac-sounds help [command]       print help for a command
+```
+
+Global flags: `-h, --help` and `-V, --version`. Every command and subcommand also accepts `-h` / `--help` on its own.
+
+`list` options: `--group <id>` (only that group), `--names` (print names instead of paths). The old `--list` / `-l` flags still work as aliases for `mac-sounds list`.
+
+```sh
+mac-sounds play glass
+mac-sounds list --group modern
+```
 
 ## Why
 
