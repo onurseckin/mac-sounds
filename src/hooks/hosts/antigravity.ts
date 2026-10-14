@@ -32,16 +32,14 @@ const OWN_HOOK_NAME = "mac-sounds";
 // PostInvocation -- this adapter only claims Stop, per product scope.
 //
 // Antigravity itself has only ONE Stop hook, unlike Claude Code's separate
-// Stop/StopFailure events -- but its Stop payload (delivered on stdin) does
-// carry enough to tell completion from failure, and dispatch.ts owns that
-// branching. So this adapter exposes it as two mac-sounds *event ids*,
-// "stop" and "stop-failure", both mapped to the SAME wire event name
-// ("Stop", below) and written as the SAME single hooks.json entry -- see
-// ownHandler(). Every method below (installedEventIds, install, uninstall,
-// stdoutFor) is the same generic logic this file already used for one
-// event; it does the right thing for two ids sharing one wire name with no
-// special-casing, because "installed"/"conflict"/"stdout" all key off the
-// wire event name via EVENT_NAME, not our id.
+// Stop/StopFailure/SubagentStop events -- but its Stop payload (delivered on
+// stdin) carries enough to tell main-agent completion, subagent completion,
+// and failure apart, and dispatch.ts owns that branching. So this adapter
+// exposes it as three mac-sounds *event ids* ("stop", "stop-failure", and
+// "subagent-stop"), all mapped to the SAME wire event name ("Stop", below)
+// and written as the SAME single hooks.json entry -- see ownHandler(). Every
+// method below (installedEventIds, install, uninstall, stdoutFor) keys off
+// the wire event name via EVENT_NAME, not our id.
 const EVENTS: readonly HookEvent[] = [
   {
     id: "stop",
@@ -53,11 +51,20 @@ const EVENTS: readonly HookEvent[] = [
     label: "Stop — failed",
     description: "Fires when the agent stops on an error or step-limit (same Stop payload).",
   },
+  {
+    id: "subagent-stop",
+    label: "SubagentStop",
+    description: "Fires when a subagent finishes normally (Stop payload from a subagent).",
+  },
 ];
 
-// Both ids resolve to the one array Antigravity actually has -- there is no
-// separate "StopFailure" wire event to point at.
-const EVENT_NAME: Readonly<Record<string, string>> = { stop: "Stop", "stop-failure": "Stop" };
+// All three ids resolve to the one array Antigravity actually has -- there are
+// no separate "StopFailure" or "SubagentStop" wire events to point at.
+const EVENT_NAME: Readonly<Record<string, string>> = {
+  stop: "Stop",
+  "stop-failure": "Stop",
+  "subagent-stop": "Stop",
+};
 
 /** A foreign named-hook's event array, displaced by a force-install. */
 interface DisplacedForeignHook {

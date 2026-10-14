@@ -26,15 +26,21 @@ const EVENTS: readonly HookEvent[] = [
   },
 ];
 
-const NOTIFY_LINE = /^notify\s*=/;
+const NOTIFY_LINE = /^\s*notify\s*=/;
 const STASH_PREFIX = "# mac-sounds:previous-notify = ";
+
+interface NotifySpan {
+  start: number;
+  end: number;
+  rhs: string;
+}
 
 /**
  * `notify` is a *top-level* key (`ConfigToml.notify: Option<Vec<String>>`).
  * TOML's classic footgun: a bare `key = value` line appearing *after* a
  * `[section]` header silently belongs to that table instead of being the
  * top-level key of the same name. So "the current top-level notify" only
- * ever means a `notify =` line found before the first `[...]` header --
+ * ever means a `notify =` declaration found before the first `[...]` header --
  * anything with that shape after one doesn't count, and a fresh `notify`
  * must always be inserted before that first header, never after it.
  */
@@ -45,9 +51,73 @@ function findPreambleEnd(lines: string[]): number {
   return lines.length;
 }
 
-function findNotifyLine(lines: string[], preambleEnd: number): number | undefined {
+/**
+ * Strips an unquoted TOML `#` comment from a single line and returns the
+ * net `[` minus `]` bracket delta outside quoted strings.
+ */
+function scanTomlLine(line: string): { code: string; bracketDelta: number } {
+  let inDouble = false;
+  let inSingle = false;
+  let escaped = false;
+  let bracketDelta = 0;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === "\\") escaped = true;
+      else if (ch === '"') inDouble = false;
+      continue;
+    }
+    if (inSingle) {
+      if (ch === "'") inSingle = false;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+    } else if (ch === "'") {
+      inSingle = true;
+    } else if (ch === "#") {
+      return { code: line.slice(0, i).trim(), bracketDelta };
+    } else if (ch === "[") {
+      bracketDelta++;
+    } else if (ch === "]") {
+      bracketDelta--;
+    }
+  }
+
+  return { code: line.trim(), bracketDelta };
+}
+
+function findNotifySpan(lines: string[], preambleEnd: number): NotifySpan | undefined {
   for (let i = 0; i < preambleEnd; i++) {
-    if (NOTIFY_LINE.test(lines[i] ?? "")) return i;
+    const line = lines[i] ?? "";
+    if (!NOTIFY_LINE.test(line)) continue;
+
+    const eq = line.indexOf("=");
+    const firstRhs = eq === -1 ? "" : line.slice(eq + 1);
+    const firstScan = scanTomlLine(firstRhs);
+    const parts: string[] = [firstScan.code];
+    let depth = firstScan.bracketDelta;
+    let end = i;
+
+    if (firstScan.code.startsWith("[") && depth > 0) {
+      for (let j = i + 1; j < preambleEnd && depth > 0; j++) {
+        const scan = scanTomlLine(lines[j] ?? "");
+        if (scan.code !== "") parts.push(scan.code);
+        depth += scan.bracketDelta;
+        end = j;
+      }
+    }
+
+    return {
+      start: i,
+      end,
+      rhs: parts.join(" ").trim(),
+    };
   }
   return undefined;
 }
@@ -56,11 +126,6 @@ function findPrecedingStash(lines: string[], notifyIndex: number): number | unde
   const prev = notifyIndex - 1;
   if (prev < 0) return undefined;
   return (lines[prev] ?? "").startsWith(STASH_PREFIX) ? prev : undefined;
-}
-
-function extractRhs(line: string): string {
-  const eq = line.indexOf("=");
-  return eq === -1 ? "" : line.slice(eq + 1).trim();
 }
 
 /**
@@ -83,16 +148,17 @@ function escapeToml(value: string): string {
 }
 
 /**
- * Parse a `notify = <rhs>` value as JSON. This only succeeds for the plain
- * "array of double-quoted strings" shape Codex itself writes (confirmed
- * against the live file on this machine) -- which happens to already be
- * valid JSON syntax. Anything else (TOML literal/multi-line strings, etc.)
- * intentionally fails closed: install() refuses to force-displace a value
- * it can't confidently stash and restore later, rather than guessing.
+ * Parse a `notify = <rhs>` value as a string array. Supports both single-line
+ * and multi-line TOML arrays of double-quoted strings (including the trailing
+ * comma before `]` that Codex's own TOML serializer emits). Anything else
+ * (TOML literal/multi-line strings, etc.) intentionally fails closed:
+ * install() refuses to force-displace a value it can't confidently stash and
+ * restore later, rather than guessing.
  */
 function parseNotifyArray(rhs: string): string[] | undefined {
+  const normalized = rhs.trim().replace(/,(\s*\])\s*$/, "$1");
   try {
-    const parsed: unknown = JSON.parse(rhs);
+    const parsed: unknown = JSON.parse(normalized);
     if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
       return parsed;
     }
@@ -143,8 +209,8 @@ export class CodexAdapter implements HostAdapter {
     const wasEmpty = raw.length === 0;
     const lines = wasEmpty ? [] : raw.split("\n");
     const preambleEnd = findPreambleEnd(lines);
-    const notifyIdx = findNotifyLine(lines, preambleEnd);
-    const currentRhs = notifyIdx !== undefined ? extractRhs(lines[notifyIdx] ?? "") : undefined;
+    const span = findNotifySpan(lines, preambleEnd);
+    const currentRhs = span?.rhs;
     const isOwn = currentRhs !== undefined && isOwnCommand(currentRhs);
 
     if (currentRhs !== undefined && !isOwn && !options.force) {
@@ -154,7 +220,7 @@ export class CodexAdapter implements HostAdapter {
     const newLine = `notify = ${renderNotifyArray([options.shimPath, HOST_ID, "turn-complete"])}`;
     const nextLines = [...lines];
 
-    if (notifyIdx === undefined) {
+    if (span === undefined) {
       // No top-level notify yet: insert before the first [section] header
       // (or at EOF if there are no sections at all) -- see findPreambleEnd.
       nextLines.splice(preambleEnd, 0, newLine);
@@ -167,18 +233,19 @@ export class CodexAdapter implements HostAdapter {
         );
       }
       const stashLine = `${STASH_PREFIX}${JSON.stringify(foreignArray)}`;
-      const existingStash = findPrecedingStash(lines, notifyIdx);
-      nextLines[notifyIdx] = newLine;
+      const existingStash = findPrecedingStash(lines, span.start);
+      const spanLen = span.end - span.start + 1;
       if (existingStash !== undefined) {
         nextLines[existingStash] = stashLine;
+        nextLines.splice(span.start, spanLen, newLine);
       } else {
-        nextLines.splice(notifyIdx, 0, stashLine);
+        nextLines.splice(span.start, spanLen, stashLine, newLine);
       }
     } else {
       // Already ours (a repeat/idempotent install), possibly with a stash
       // comment sitting above it from an earlier force-install -- leave that
-      // comment exactly as-is and just refresh the notify line itself.
-      nextLines[notifyIdx] = newLine;
+      // comment exactly as-is and just refresh the notify span itself.
+      nextLines.splice(span.start, span.end - span.start + 1, newLine);
     }
 
     backupOnce(path);
@@ -192,29 +259,29 @@ export class CodexAdapter implements HostAdapter {
 
     const lines = raw.split("\n");
     const preambleEnd = findPreambleEnd(lines);
-    const notifyIdx = findNotifyLine(lines, preambleEnd);
-    if (notifyIdx === undefined) return;
+    const span = findNotifySpan(lines, preambleEnd);
+    if (span === undefined) return;
 
-    const currentRhs = extractRhs(lines[notifyIdx] ?? "");
-    if (!isOwnCommand(currentRhs)) return;
+    if (!isOwnCommand(span.rhs)) return;
 
-    const stashIdx = findPrecedingStash(lines, notifyIdx);
+    const stashIdx = findPrecedingStash(lines, span.start);
     const nextLines = [...lines];
+    const spanLen = span.end - span.start + 1;
 
     if (stashIdx !== undefined) {
       const stashRhs = (lines[stashIdx] ?? "").slice(STASH_PREFIX.length).trim();
       const restored = parseNotifyArray(stashRhs);
       if (restored !== undefined) {
-        nextLines[notifyIdx] = `notify = ${renderNotifyArray(restored)}`;
+        nextLines.splice(span.start, spanLen, `notify = ${renderNotifyArray(restored)}`);
         nextLines.splice(stashIdx, 1);
       } else {
         // Stash comment present but unparseable (hand-edited?) -- don't
-        // guess at restoring it. Remove our own notify line and leave the
+        // guess at restoring it. Remove our own notify span and leave the
         // comment for a human to sort out rather than losing data quietly.
-        nextLines.splice(notifyIdx, 1);
+        nextLines.splice(span.start, spanLen);
       }
     } else {
-      nextLines.splice(notifyIdx, 1);
+      nextLines.splice(span.start, spanLen);
     }
 
     backupOnce(path);
@@ -225,8 +292,7 @@ export class CodexAdapter implements HostAdapter {
     const raw = readTextFileIfExists(this.configPath());
     if (raw === undefined) return undefined;
     const lines = raw.split("\n");
-    const notifyIdx = findNotifyLine(lines, findPreambleEnd(lines));
-    return notifyIdx === undefined ? undefined : extractRhs(lines[notifyIdx] ?? "");
+    return findNotifySpan(lines, findPreambleEnd(lines))?.rhs;
   }
 
   private write(path: string, lines: string[], forceTrailingNewline: boolean): void {

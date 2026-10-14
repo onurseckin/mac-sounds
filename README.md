@@ -142,10 +142,10 @@ Disabling an event with no sound assigned is a no-op that exits 0 ("nothing to d
 | Host | Events |
 |---|---|
 | `claude` | `stop`, `stop-failure`, `subagent-stop`, `session-start`, `notification` |
-| `antigravity` | `stop`, `stop-failure` |
+| `antigravity` | `stop`, `stop-failure`, `subagent-stop` |
 | `codex` | `turn-complete` |
 
-Antigravity CLI itself has only one `Stop` hook, and mac-sounds writes a single entry into `~/.gemini/config/hooks.json` for it. The split happens at fire time: mac-sounds reads the `Stop` payload from stdin and treats a `terminationReason` of `error` or `max_steps_exceeded`, or any non-empty `error` string, as failure; everything else — including a payload that fails to parse — counts as success, deliberately, so a payload schema change can never turn every normal completion into an alarm.
+Antigravity (CLI and IDE) has one `Stop` hook, and mac-sounds writes a single entry into `~/.gemini/config/hooks.json` for it. The split happens at fire time: mac-sounds reads the `Stop` payload from stdin and treats a `terminationReason` of `ERROR`, `MAX_INVOCATIONS`, `MAX_FORCED_INVOCATIONS`, `MAX_TOKEN_BUDGET_EXCEEDED`, `HALTED_STEP` (or legacy lowercase `error` / `max_steps_exceeded`), or any non-empty `error` string, as `stop-failure`; non-failure turns from subagents (identified via subagent metadata, worktree paths, or the conversation transcript's initial `SYSTEM_MESSAGE` step) resolve to `subagent-stop`; everything else — including a payload that fails to parse — resolves to `stop`, so a payload schema change can never turn normal completions into alarms.
 
 Codex exposes only `turn-complete`, with no separate success/failure signal — that is a limit of Codex's legacy `notify` mechanism, not of mac-sounds, so do not file it as a bug. (Codex's newer `[hooks]` table hashes every entry and treats a config-written hook as untrusted until a human approves it in the TUI, which makes it unusable for this; `notify` has no such gate.)
 

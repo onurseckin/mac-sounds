@@ -1,3 +1,4 @@
+import { closeSync, openSync, readSync } from "node:fs";
 import { getBinding, loadConfig } from "./config.ts";
 import { isRecord } from "./hosts/fs-utils.ts";
 import { adapterFor } from "./hosts/registry.ts";
@@ -37,25 +38,23 @@ function playDetached(soundPath: string): void {
   }
 }
 
-// Antigravity has exactly one Stop hook (see hosts/antigravity.ts) -- its payload arrives
-// as JSON on stdin carrying `terminationReason` ("model_stop" | "max_steps_exceeded" |
-// "error") and an `error` string populated only on failure. This mirrors the judgement
-// already proven out in this machine's hand-written ~/.gemini/config/scripts/stop-sound.sh:
-// only an explicit failure signal counts as failure, and anything that fails to parse -- a
-// schema change, truncated input, a host bug -- is success on purpose. Getting this
-// backwards would turn a payload format change into every normal completion playing the
-// failure sound.
-function isAntigravityFailurePayload(payload: string): boolean {
-  if (payload === "") return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    return false;
-  }
-  if (!isRecord(parsed)) return false;
+// Antigravity's NewStopHook strips the "EXECUTOR_TERMINATION_REASON_" enum prefix and emits
+// uppercase reason names ("NO_TOOL_CALL", "ERROR", "MAX_INVOCATIONS",
+// "MAX_FORCED_INVOCATIONS", "MAX_TOKEN_BUDGET_EXCEEDED", "HALTED_STEP"), alongside older
+// lowercase variants ("model_stop", "max_steps_exceeded", "error"). Comparing lowercased
+// covers both conventions while treating any unrecognised or missing reason as non-failure.
+const ANTIGRAVITY_FAILURE_REASONS: ReadonlySet<string> = new Set([
+  "error",
+  "max_steps_exceeded",
+  "max_invocations",
+  "max_forced_invocations",
+  "max_token_budget_exceeded",
+  "halted_step",
+]);
 
-  if (parsed.terminationReason === "error" || parsed.terminationReason === "max_steps_exceeded") {
+function isAntigravityFailureRecord(parsed: Record<string, unknown>): boolean {
+  const reason = parsed.terminationReason;
+  if (typeof reason === "string" && ANTIGRAVITY_FAILURE_REASONS.has(reason.trim().toLowerCase())) {
     return true;
   }
 
@@ -63,6 +62,73 @@ function isAntigravityFailurePayload(payload: string): boolean {
   // whitespace-only error string isn't a real error message.
   const error = parsed.error;
   return typeof error === "string" && error.trim() !== "";
+}
+
+// Antigravity scrubs internal protobuf fields (parentConversationId, rootConversationId,
+// agentName) from external Stop payloads when useFullHookInterface is false, but always
+// includes public fields `transcriptPath` and `workspacePaths`. In Antigravity's JSONL
+// transcript format, main user conversations always start at step_index 0 with
+// `{"source":"USER_EXPLICIT","type":"USER_INPUT"}`, whereas invoked subagents start at
+// step_index 0 with `{"source":"SYSTEM","type":"SYSTEM_MESSAGE"}` carrying the parent's
+// delegation prompt. Reading only the first 4 KB keeps this check sub-millisecond.
+function isTranscriptFromSubagent(transcriptPath: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(transcriptPath, "r");
+    const buf = Buffer.alloc(4096);
+    const bytesRead = readSync(fd, buf, 0, buf.length, 0);
+    if (bytesRead <= 0) return false;
+    const chunk = buf.toString("utf8", 0, bytesRead);
+    const newlineIdx = chunk.indexOf("\n");
+    const firstLine = (newlineIdx === -1 ? chunk : chunk.slice(0, newlineIdx)).trim();
+    if (firstLine === "") return false;
+    const firstStep: unknown = JSON.parse(firstLine);
+    if (!isRecord(firstStep)) return false;
+    return firstStep.source === "SYSTEM" || firstStep.type === "SYSTEM_MESSAGE";
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Ignore close errors.
+      }
+    }
+  }
+}
+
+function isAntigravitySubagentRecord(parsed: Record<string, unknown>): boolean {
+  if (
+    typeof parsed.parentConversationId === "string" &&
+    parsed.parentConversationId.trim() !== ""
+  ) {
+    return true;
+  }
+  if (
+    typeof parsed.rootConversationId === "string" &&
+    parsed.rootConversationId.trim() !== "" &&
+    parsed.rootConversationId !== parsed.conversationId
+  ) {
+    return true;
+  }
+  if (typeof parsed.agentName === "string" && parsed.agentName.trim() !== "") {
+    return true;
+  }
+  if (
+    Array.isArray(parsed.workspacePaths) &&
+    parsed.workspacePaths.some(
+      (entry) =>
+        typeof entry === "string" &&
+        (entry.includes("/subagent-") || entry.includes("\\subagent-")),
+    )
+  ) {
+    return true;
+  }
+  if (typeof parsed.transcriptPath === "string" && parsed.transcriptPath.trim() !== "") {
+    return isTranscriptFromSubagent(parsed.transcriptPath);
+  }
+  return false;
 }
 
 // A few hundred milliseconds at most. dispatch() runs synchronously inside the user's
@@ -118,12 +184,24 @@ function readStdinWithTimeout(timeoutMs: number): Promise<string> {
   });
 }
 
-// The one place that tells Antigravity's two outcomes apart: read the Stop payload
+// The one place that tells Antigravity's Stop outcomes apart: read the Stop payload
 // (bounded, see readStdinWithTimeout) and resolve to whichever mac-sounds event id should
-// actually play -- `eventId` ("stop") unless the payload says otherwise.
+// actually play -- "stop-failure" on error/limit termination, "subagent-stop" when the
+// completed turn belongs to a subagent, or `eventId` ("stop") otherwise.
 async function resolveAntigravityStopEventId(eventId: string): Promise<string> {
   const payload = await readStdinWithTimeout(ANTIGRAVITY_STDIN_TIMEOUT_MS);
-  return isAntigravityFailurePayload(payload) ? "stop-failure" : eventId;
+  if (payload === "") return eventId;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return eventId;
+  }
+  if (!isRecord(parsed)) return eventId;
+
+  if (isAntigravityFailureRecord(parsed)) return "stop-failure";
+  if (isAntigravitySubagentRecord(parsed)) return "subagent-stop";
+  return eventId;
 }
 
 // Invoked by `mac-sounds hook <host> <event>`, itself invoked by the generated shim
@@ -153,17 +231,22 @@ export async function dispatch(hostId: HostId, eventId: string): Promise<void> {
       process.stdout.write(stdout);
     }
 
-    // Antigravity has one Stop hook and no separate failure event -- unlike Claude's
-    // already-distinct "stop"/"stop-failure" ids, so the split has to happen here, from the
-    // payload, instead of arriving as a different eventId. Every other host/event
-    // combination is already 1:1 with a binding, so eventId passes through unchanged.
+    // Antigravity has one Stop hook and no separate failure or subagent wire event --
+    // unlike Claude's already-distinct "stop"/"stop-failure"/"subagent-stop" ids, so the
+    // split has to happen here, from the payload, instead of arriving as a different
+    // eventId. Every other host/event combination is already 1:1 with a binding, so
+    // eventId passes through unchanged.
     const resolvedEventId =
       hostId === "antigravity" && eventId === "stop"
         ? await resolveAntigravityStopEventId(eventId)
         : eventId;
 
     const config = loadConfig();
-    const binding = getBinding(config, hostId, resolvedEventId);
+    const binding =
+      getBinding(config, hostId, resolvedEventId) ??
+      (hostId === "antigravity" && resolvedEventId === "subagent-stop"
+        ? getBinding(config, hostId, "stop")
+        : undefined);
     // No binding at all, or an explicit enabled:false -> play nothing. This lookup *is*
     // the entire toggle mechanism: disabling a binding never rewrites the host's own
     // config file (Claude's settings.json, Codex's config.toml, Antigravity's
@@ -171,7 +254,8 @@ export async function dispatch(hostId: HostId, eventId: string): Promise<void> {
     // effect on every future turn without touching host-side wiring again. Resolving
     // per-outcome above (rather than always looking up the original eventId) is what
     // keeps this toggle working per-outcome for Antigravity too -- a user can have
-    // "stop-failure" enabled and "stop" disabled (or vice versa) and get exactly that.
+    // "stop-failure" and "subagent-stop" enabled and "stop" disabled (or vice versa)
+    // and get exactly that.
     if (binding === undefined || !binding.enabled) return;
 
     playDetached(binding.soundPath);

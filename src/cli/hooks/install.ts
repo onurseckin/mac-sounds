@@ -1,7 +1,7 @@
 import { HostConflictError } from "../../hooks/hosts/adapter.ts";
 import { adapterFor } from "../../hooks/hosts/registry.ts";
 import { writeShim } from "../../hooks/shim.ts";
-import { bindingsForHost, loadConfig, saveConfig, upsertBinding } from "../../hooks/config.ts";
+import { getBinding, loadConfig, saveConfig, upsertBinding } from "../../hooks/config.ts";
 import type { Binding, HostId } from "../../hooks/types.ts";
 import {
   COMPLETION_STYLE_EVENT_IDS,
@@ -21,20 +21,22 @@ function defaultSoundFor(eventId: string): string | null {
   return null;
 }
 
-// Seeds sensible defaults only when the host has zero bindings of its own --
-// a host the user has already touched (even partially) is left exactly as
-// they set it, never overwritten by a re-install.
+// Seeds sensible defaults for any event that does not yet have a binding --
+// events the user has already configured or toggled are left untouched, never
+// overwritten by a re-install.
 function seedDefaults(hostId: HostId, eventIds: readonly string[]): void {
   let config = loadConfig();
-  if (bindingsForHost(config, hostId).length > 0) return;
+  let changed = false;
 
   for (const eventId of eventIds) {
+    if (getBinding(config, hostId, eventId) !== undefined) continue;
     const soundPath = defaultSoundFor(eventId);
     if (soundPath === null) continue; // no sensible default -- leave unbound
     const binding: Binding = { hostId, eventId, soundPath, enabled: true };
     config = upsertBinding(config, binding);
+    changed = true;
   }
-  saveConfig(config);
+  if (changed) saveConfig(config);
 }
 
 interface ParsedArgs {
